@@ -63,8 +63,10 @@ export function init(options: InitOptions) {
 
   interruptClick(logoutButton, () => {
     clearCredentials();
-    if (location.pathname == '/') location.reload();
-    else location.href = logoutHref;
+    // if (location.pathname == '/') location.reload();
+    // else 
+    location.href = "123";
+    location.href = logoutHref;
   });
 
   document.addEventListener('click', () => retry(updateUsageInfo));
