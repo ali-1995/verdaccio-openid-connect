@@ -151,6 +151,9 @@ export default class OidcPlugin implements IPluginAuth<OidcPluginConfig>, IPlugi
         {rolesClaim, claims: JSON.stringify(Object.keys(tokenSet.claims()))},
         `Missing roles claim '@{rolesClaim}. Available claims: @{claims}'`,
       );
+      Object.keys(tokenSet.claims()).forEach(key=>{
+        this.logger.info({key,data: tokenSet.claims()[key]},`@{key} : @{data}`)
+      })
       return [];
     }
 
