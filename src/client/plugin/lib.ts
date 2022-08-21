@@ -11,9 +11,9 @@ export function parseCookies() {
       return {key: el.split('=')[0], val: el.split('=')[1]};
     });
   return {
-    username: cookies.some(el => el.key == 'username') ? cookies.find(el => el.key == 'username')?.val : null,
-    uiToken: cookies.some(el => el.key == 'ui-token') ? cookies.find(el => el.key == 'ui-token')?.val : null,
-    npmToken: cookies.some(el => el.key == 'npm-token') ? cookies.find(el => el.key == 'npm-token')?.val : null,
+    username: cookies.some(el => el.key == 'username') ? decodeURI(cookies.find(el => el.key == 'username').val) : null,
+    uiToken: cookies.some(el => el.key == 'ui-token') ? cookies.find(el => el.key == 'ui-token').val : null,
+    npmToken: cookies.some(el => el.key == 'npm-token') ? cookies.find(el => el.key == 'npm-token').val : null,
   };
 }
 
