@@ -479,7 +479,7 @@ export default class OidcPlugin implements IPluginAuth<OidcPluginConfig>, IPlugi
     });
 
     app.get('/-/static/oidc-ui/verdaccio.js', (req, res, next) => {
-      res.sendFile(__dirname + '/lib/client/verdaccio.js');
+      res.sendFile(__dirname + '/client/verdaccio.js');
     });
   }
 
