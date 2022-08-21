@@ -65,7 +65,7 @@ export function init(options: InitOptions) {
     clearCredentials();
     // if (location.pathname == '/') location.reload();
     // else 
-    location.href = "123";
+    // location.href = "123";
     location.href = logoutHref;
   });
 
