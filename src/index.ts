@@ -457,7 +457,7 @@ export default class OidcPlugin implements IPluginAuth<OidcPluginConfig>, IPlugi
           res
             .cookie('ui-token', webToken)
             .cookie('npm-token', npmToken)
-            .cookie('username', this.getUsername(tokenSet))
+            .cookie('username', decodeURI(this.getUsername(tokenSet)))
             .redirect(this.options.config.publicUrl);
         })
         .catch(next);
