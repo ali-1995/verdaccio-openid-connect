@@ -12,50 +12,19 @@ import {
 import {Issuer, Client, TokenSet} from 'openid-client';
 import asyncRetry = require('async-retry');
 import * as express from 'express';
-import {Express, Response} from 'express';
+import {Express, Handler, Response} from 'express';
 import {nanoid} from 'nanoid/async';
 import ms = require('ms');
 import * as jwt from 'jsonwebtoken';
 import {URL} from 'url';
-
-import {ISessionStorage, ITokenStorage} from './types';
+import {ISessionStorage, ITokenStorage, OidcPluginConfig, PluginMode, RemoteUserEx, Tokens} from './types';
 import {NewRedisStorage} from './redis';
 import {NewFileStorage} from './fs';
-
-type OidcPluginConfig = {
-  publicUrl: string;
-  issuer: string;
-  clientId: string;
-  clientSecret: string;
-  scope: string;
-  usernameClaim?: string;
-  rolesClaim?: string;
-
-  redisUri?: string;
-  fsSessionStorePath?: string;
-  fsTokenStorePath?: string;
-
-  accessTokenAuth?: boolean;
-};
-
-type Tokens = {
-  npmToken: string;
-  webToken: string;
-};
-
-type RemoteUserEx = RemoteUser & {sid: string};
-
-enum PluginMode {
-  LEGACY,
-  JWT,
-}
 
 const UnsupportedPluginModeError = () => new Error('unsupported plugin mode');
 const TOKEN_BEARER = 'Bearer';
 
-export default class OidcPlugin
-  implements IPluginAuth<OidcPluginConfig>, IPluginMiddleware<OidcPluginConfig>
-{
+export default class OidcPlugin implements IPluginAuth<OidcPluginConfig>, IPluginMiddleware<OidcPluginConfig> {
   private readonly pluginName = 'verdaccio-openid-connect';
 
   private clientPromise!: Promise<Client>;
@@ -66,10 +35,7 @@ export default class OidcPlugin
   private mode!: PluginMode;
   private sessionTtl!: number;
 
-  constructor(
-    config: OidcPluginConfig & Config,
-    private options: PluginOptions<OidcPluginConfig>,
-  ) {
+  constructor(config: OidcPluginConfig & Config, private options: PluginOptions<OidcPluginConfig>) {
     if (options.config.oidcPluginInstance != null) {
       return options.config.oidcPluginInstance;
     }
@@ -87,36 +53,22 @@ export default class OidcPlugin
       // and for such reason, this property exists.
       this.mode = PluginMode.LEGACY;
     } else {
-      this.mode = options.config.security?.api?.jwt
-        ? PluginMode.JWT
-        : PluginMode.LEGACY;
+      this.mode = options.config.security?.api?.jwt ? PluginMode.JWT : PluginMode.LEGACY;
     }
 
     switch (this.mode) {
       case PluginMode.LEGACY:
-        this.logger.trace(
-          {pluginName: this.pluginName},
-          '@{pluginName} in legacy mode',
-        );
+        this.logger.trace({pluginName: this.pluginName}, '@{pluginName} in legacy mode');
         this.apiJWTmiddleware = undefined;
         this.sessionTtl = ms('30d');
 
         break;
       case PluginMode.JWT:
-        this.logger.trace(
-          {pluginName: this.pluginName},
-          '@{pluginName} in jwt mode',
-        );
+        this.logger.trace({pluginName: this.pluginName}, '@{pluginName} in jwt mode');
         this.apiJWTmiddleware = this._apiJWTmiddleware;
-        const sessionExpiresIn =
-          options.config.security?.api?.jwt?.sign?.expiresIn;
-        const sessionTtl =
-          sessionExpiresIn == null || sessionExpiresIn === 'never'
-            ? '30d'
-            : sessionExpiresIn;
-        this.sessionTtl = Number.isNaN(+sessionTtl)
-          ? ms(sessionTtl)
-          : +sessionTtl;
+        const sessionExpiresIn = options.config.security?.api?.jwt?.sign?.expiresIn;
+        const sessionTtl = sessionExpiresIn == null || sessionExpiresIn === 'never' ? '30d' : sessionExpiresIn;
+        this.sessionTtl = Number.isNaN(+sessionTtl) ? ms(sessionTtl) : +sessionTtl;
 
         break;
       default:
@@ -127,43 +79,29 @@ export default class OidcPlugin
       const rs = NewRedisStorage(options.config.redisUri);
       this.ss = rs.ss;
       this.ts = rs.ts;
-    } else if (
-      options.config.fsSessionStorePath &&
-      options.config.fsTokenStorePath
-    ) {
-      const rs = NewFileStorage(
-        this.logger,
-        options.config.fsSessionStorePath,
-        options.config.fsTokenStorePath,
-      );
+    } else if (options.config.fsSessionStorePath && options.config.fsTokenStorePath) {
+      const rs = NewFileStorage(this.logger, options.config.fsSessionStorePath, options.config.fsTokenStorePath);
       this.ss = rs.ss;
       this.ts = rs.ts;
     } else {
-      throw new Error(
-        'invalid configuration: none of [redisUri] or [fsSessionStorePath, fsTokenStorePath] is set',
-      );
+      throw new Error('invalid configuration: none of [redisUri] or [fsSessionStorePath, fsTokenStorePath] is set');
     }
 
-    this.clientPromise = asyncRetry(
-      () => Issuer.discover(options.config.issuer),
-      {
-        forever: true,
-        maxTimeout: 30_000,
-        onRetry: (err, attempt) => {
-          this.logger.error(
-            {err, attempt},
-            'Failed to discover issuer, retrying [@{attempt}]: @{!err.message}\n@{err.stack}',
-          );
-        },
+    this.clientPromise = asyncRetry(() => Issuer.discover(options.config.issuer), {
+      forever: true,
+      maxTimeout: 30_000,
+      onRetry: (err, attempt) => {
+        this.logger.error(
+          {err, attempt},
+          'Failed to discover issuer, retrying [@{attempt}]: @{!err.message}\n@{err.stack}',
+        );
       },
-    ).then(
+    }).then(
       issuer =>
         new issuer.Client({
           client_id: options.config.clientId,
           client_secret: options.config.clientSecret,
-          redirect_uris: [
-            new URL('oidc/callback', options.config.publicUrl).toString(),
-          ],
+          redirect_uris: [new URL('oidc/callback', options.config.publicUrl).toString()],
           response_types: ['code'],
         }),
     );
@@ -219,10 +157,7 @@ export default class OidcPlugin
     return roles;
   }
 
-  private async saveSession(
-    sessionId: string,
-    tokenSet: TokenSet,
-  ): Promise<void> {
+  private async saveSession(sessionId: string, tokenSet: TokenSet): Promise<void> {
     await this.ss.set(`session:${sessionId}`, tokenSet, this.sessionTtl);
   }
 
@@ -230,9 +165,7 @@ export default class OidcPlugin
     Promise.resolve()
       .then(async () => {
         const sessionId = password;
-        const tokenSetObj: any | null = await this.ss.get(
-          `session:${sessionId}`,
-        );
+        const tokenSetObj: any | null = await this.ss.get(`session:${sessionId}`);
 
         if (tokenSetObj == null) {
           cb(null, false);
@@ -253,10 +186,7 @@ export default class OidcPlugin
         }
 
         if (tokenSet.expired()) {
-          this.logger.info(
-            {username},
-            'Refreshing expired session for @{username}',
-          );
+          this.logger.info({username}, 'Refreshing expired session for @{username}');
 
           const client = await this.clientPromise;
 
@@ -277,11 +207,7 @@ export default class OidcPlugin
   public apiJWTmiddleware?: (helpers: any) => any;
 
   private _apiJWTmiddleware(helpers: any): any {
-    return (
-      req: express.Request & {remote_user: RemoteUserEx},
-      res: express.Response,
-      _next: express.NextFunction,
-    ) => {
+    return (req: express.Request & {remote_user: RemoteUserEx}, res: express.Response, _next: express.NextFunction) => {
       req.pause();
 
       const next = function (err?: Error) {
@@ -310,14 +236,8 @@ export default class OidcPlugin
       }
 
       const authorizationParts = authorization.split(' ', 2);
-      if (
-        authorizationParts.length !== 2 ||
-        authorizationParts[0] !== TOKEN_BEARER
-      ) {
-        this.logger.warn(
-          {scheme: authorizationParts[0]},
-          'unsupported authorization encoding or scheme @{scheme}',
-        );
+      if (authorizationParts.length !== 2 || authorizationParts[0] !== TOKEN_BEARER) {
+        this.logger.warn({scheme: authorizationParts[0]}, 'unsupported authorization encoding or scheme @{scheme}');
         return next(new Error('unsupported authorization encoding or scheme'));
       }
 
@@ -327,10 +247,7 @@ export default class OidcPlugin
       try {
         jwtPayload = jwt.verify(jwtRaw, this.options.config.secret);
       } catch (err) {
-        this.logger.error(
-          {err},
-          'erro while verify jwt bearer token: @{!err.message}\n@{err.stack}',
-        );
+        this.logger.error({err}, 'erro while verify jwt bearer token: @{!err.message}\n@{err.stack}');
       }
 
       if (!jwtPayload) {
@@ -350,10 +267,7 @@ export default class OidcPlugin
       }
 
       if (!real_groups) {
-        this.logger.error(
-          {},
-          'income jwt token not contains [real_groups] claim',
-        );
+        this.logger.error({}, 'income jwt token not contains [real_groups] claim');
         return next(new Error('jwt token not contains real_groups'));
       }
 
@@ -364,15 +278,8 @@ export default class OidcPlugin
         }
 
         if (!groups) {
-          this.logger.error(
-            {sid},
-            'unable to found session groups for income jwt token session @{sid}',
-          );
-          return next(
-            new Error(
-              'unable to found session groups for income jwt token session',
-            ),
-          );
+          this.logger.error({sid}, 'unable to found session groups for income jwt token session @{sid}');
+          return next(new Error('unable to found session groups for income jwt token session'));
         }
 
         const groupsWithoutUser: string[] = groups.slice(1);
@@ -385,9 +292,7 @@ export default class OidcPlugin
               'income token contains [real_groups] claim that not subset of oidc server roles claim',
             );
             return next(
-              new Error(
-                'income token contains [real_groups] claim that not subset of oidc server roles claim',
-              ),
+              new Error('income token contains [real_groups] claim that not subset of oidc server roles claim'),
             );
           }
         }
@@ -398,63 +303,49 @@ export default class OidcPlugin
     };
   }
 
-  public register_middlewares(
-    app: Express,
-    auth: IBasicAuth<OidcPluginConfig>,
-  ): void {
-    app.put(
-      '/-/user/org.couchdb.user::userId',
-      express.json(),
-      (req, res, next) => {
-        Promise.resolve()
-          .then(async () => {
-            const subjectToken = req.body.password;
-            if (!subjectToken) {
-              this.unauthorized(res, 'Password attribute is missing.');
-              return;
-            }
-            const userName = req.body.name;
-            if (userName !== req.params.userId) {
-              this.unauthorized(res, 'User ID in URL and body do not match.');
-              return;
-            }
-            const clientSecret = this.options.config.clientSecret;
-            const clientId = this.options.config.clientId;
-            const client = await this.clientPromise;
-            let tokenSet = await client.grant({
-              grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
-              'requested_token_type ':
-                'urn:ietf:params:oauth:token-type:refresh_token',
-              client_secret: clientSecret,
-              client_id: clientId,
-              subject_token: subjectToken,
-              subject_token_type:
-                'urn:ietf:params:oauth:token-type:access_token',
-              scope: this.options.config.scope,
-            });
+  public register_middlewares(app: Express, auth: IBasicAuth<OidcPluginConfig>): void {
+    app.use(this.patchResponse);
 
-            const tokenUsername = this.getUsername(tokenSet);
-            if (userName !== tokenUsername) {
-              this.unauthorized(
-                res,
-                'Access token is not issued for the user trying to log in.',
-              );
-              return;
-            }
+    app.put('/-/user/org.couchdb.user::userId', express.json(), (req, res, next) => {
+      Promise.resolve()
+        .then(async () => {
+          const subjectToken = req.body.password;
+          if (!subjectToken) {
+            this.unauthorized(res, 'Password attribute is missing.');
+            return;
+          }
+          const userName = req.body.name;
+          if (userName !== req.params.userId) {
+            this.unauthorized(res, 'User ID in URL and body do not match.');
+            return;
+          }
+          const clientSecret = this.options.config.clientSecret;
+          const clientId = this.options.config.clientId;
+          const client = await this.clientPromise;
+          let tokenSet = await client.grant({
+            grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+            'requested_token_type ': 'urn:ietf:params:oauth:token-type:refresh_token',
+            client_secret: clientSecret,
+            client_id: clientId,
+            subject_token: subjectToken,
+            subject_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+            scope: this.options.config.scope,
+          });
 
-            const sessionId = await nanoid();
-            const {npmToken} = await this.saveSessionAndCreateTokens(
-              sessionId,
-              tokenSet,
-              auth,
-            );
-            const responseBody = JSON.stringify({token: npmToken});
-            res.status(201);
-            res.set('Content-Type', 'application/json').end(responseBody);
-          })
-          .catch(next);
-      },
-    );
+          const tokenUsername = this.getUsername(tokenSet);
+          if (userName !== tokenUsername) {
+            this.unauthorized(res, 'Access token is not issued for the user trying to log in.');
+            return;
+          }
+
+          const sessionId = await nanoid();
+          const {npmToken} = await this.saveSessionAndCreateTokens(sessionId, tokenSet, auth);
+          const responseBody = JSON.stringify({token: npmToken});
+          res.status(201);
+          res.set('Content-Type', 'application/json').end(responseBody);
+        })
+        .catch(next);
+    });
 
     if (this.options.config.accessTokenAuth !== true) {
       app.post('/-/v1/login', express.json(), (req, res, next) => {
@@ -464,14 +355,8 @@ export default class OidcPlugin
 
             res.set('Content-Type', 'application/json').end(
               JSON.stringify({
-                loginUrl: new URL(
-                  `oidc/login/${loginRequestId}`,
-                  this.options.config.publicUrl,
-                ),
-                doneUrl: new URL(
-                  `oidc/done/${loginRequestId}`,
-                  this.options.config.publicUrl,
-                ),
+                loginUrl: new URL(`oidc/login/${loginRequestId}`, this.options.config.publicUrl),
+                doneUrl: new URL(`oidc/done/${loginRequestId}`, this.options.config.publicUrl),
               }),
             );
           })
@@ -479,18 +364,38 @@ export default class OidcPlugin
       });
     }
 
+    app.get('/-/ui/login', (req, res, next) => {
+      Promise.resolve()
+        .then(async () => {
+          const loginRequestId = await nanoid();
+          res.redirect(new URL(`oidc/login-ui/${loginRequestId}`, this.options.config.publicUrl).toString());
+        })
+        .catch(next);
+    });
+
     app.get('/oidc/login/:loginRequestId', (req, res, next) => {
       Promise.resolve()
         .then(async () => {
           const client = await this.clientPromise;
-
           const authorizationUrl = client.authorizationUrl({
             scope: this.options.config.scope || 'openid email profile',
             state: req.params.loginRequestId,
-            redirect_uri: new URL(
-              'oidc/callback',
-              this.options.config.publicUrl,
-            ).toString(),
+            redirect_uri: new URL('oidc/callback', this.options.config.publicUrl).toString(),
+          });
+
+          res.redirect(authorizationUrl);
+        })
+        .catch(next);
+    });
+
+    app.get('/oidc/login-ui/:loginRequestId', (req, res, next) => {
+      Promise.resolve()
+        .then(async () => {
+          const client = await this.clientPromise;
+          const authorizationUrl = client.authorizationUrl({
+            scope: this.options.config.scope || 'openid email profile',
+            state: req.params.loginRequestId,
+            redirect_uri: new URL('oidc/callback-ui', this.options.config.publicUrl).toString(),
           });
 
           res.redirect(authorizationUrl);
@@ -517,17 +422,43 @@ export default class OidcPlugin
           const loginRequestId = params.state;
           const sessionId = await nanoid();
 
-          const {npmToken, webToken} = await this.saveSessionAndCreateTokens(
-            sessionId,
-            tokenSet,
-            auth,
+          const {npmToken, webToken} = await this.saveSessionAndCreateTokens(sessionId, tokenSet, auth);
+
+          await this.ts.set(`login:${loginRequestId}`, npmToken, 5 * 60);
+
+          res.set('Content-Type', 'text/html').end(callbackResponseHtml(webToken));
+        })
+        .catch(next);
+    });
+
+    app.get('/oidc/callback-ui', (req, res, next) => {
+      Promise.resolve()
+        .then(async () => {
+          const client = await this.clientPromise;
+
+          const params = client.callbackParams(req);
+
+          const tokenSet = await client.callback(
+            new URL('oidc/callback-ui', this.options.config.publicUrl).toString(),
+            params,
+            {
+              state: params.state,
+              nonce: null!,
+            },
           );
+
+          const loginRequestId = params.state;
+          const sessionId = await nanoid();
+
+          const {npmToken, webToken} = await this.saveSessionAndCreateTokens(sessionId, tokenSet, auth);
 
           await this.ts.set(`login:${loginRequestId}`, npmToken, 5 * 60);
 
           res
-            .set('Content-Type', 'text/html')
-            .end(callbackResponseHtml(webToken));
+            .cookie('ui-token', webToken)
+            .cookie('npm-token', npmToken)
+            .cookie('username', this.getUsername(tokenSet))
+            .redirect(this.options.config.publicUrl);
         })
         .catch(next);
     });
@@ -535,23 +466,39 @@ export default class OidcPlugin
     app.get('/oidc/done/:loginRequestId', (req, res, next) => {
       Promise.resolve()
         .then(async () => {
-          const token = await this.ts.get(
-            `login:${req.params.loginRequestId}`,
-            10_000,
-          );
+          const token = await this.ts.get(`login:${req.params.loginRequestId}`, 10_000);
 
           if (token == null) {
             res.status(202).end(JSON.stringify({}));
             return;
           }
 
-          res
-            .set('Content-Type', 'application/json')
-            .end(JSON.stringify({token}));
+          res.set('Content-Type', 'application/json').end(JSON.stringify({token}));
         })
         .catch(next);
     });
+
+    app.get('/-/static/oidc-ui/verdaccio.js', (req, res, next) => {
+      res.sendFile(__dirname + '/lib/client/verdaccio.js');
+    });
   }
+
+  patchResponse: Handler = (req, res, next) => {
+    const send = res.send;
+    res.send = html => {
+      html = this.insertTags(html);
+      return send.call(res, html);
+    };
+    next();
+  };
+
+  private insertTags = (html: string | Buffer): string => {
+    html = String(html);
+    if (!html.includes('__VERDACCIO_BASENAME_UI_OPTIONS')) {
+      return html;
+    }
+    return html.replace(/<\/body>/, [`<script src="/-/static/oidc-ui/verdaccio.js"></script>`, '</body>'].join(''));
+  };
 
   private unauthorized(res: Response, msg: string): void {
     this.logger.trace({msg}, 'Unauthorized access: @{msg}');
@@ -571,9 +518,7 @@ export default class OidcPlugin
     let webToken: string;
     switch (this.mode) {
       case PluginMode.LEGACY:
-        npmToken = auth
-          .aesEncrypt(Buffer.from(`${username}:${sessionId}`, 'utf8'))
-          .toString('base64');
+        npmToken = auth.aesEncrypt(Buffer.from(`${username}:${sessionId}`, 'utf8')).toString('base64');
         webToken = npmToken;
         break;
       case PluginMode.JWT:
@@ -600,13 +545,7 @@ export default class OidcPlugin
 function createRemoteUser(name: string, pluginGroups: string[]): RemoteUser {
   //copy&paste from: verdaccio/src/lib/auth-utils.ts
   const isGroupValid: boolean = Array.isArray(pluginGroups);
-  const groups = (isGroupValid ? pluginGroups : []).concat([
-    '$all',
-    'all',
-    '$authenticated',
-    '@all',
-    '@authenticated',
-  ]);
+  const groups = (isGroupValid ? pluginGroups : []).concat(['$all', 'all', '$authenticated', '@all', '@authenticated']);
 
   return {
     name,
@@ -615,20 +554,14 @@ function createRemoteUser(name: string, pluginGroups: string[]): RemoteUser {
   };
 }
 
-function signPayload(
-  payload: RemoteUserEx,
-  secretOrPrivateKey: string,
-  options: JWTSignOptions,
-): Promise<string> {
+function signPayload(payload: RemoteUserEx, secretOrPrivateKey: string, options: JWTSignOptions): Promise<string> {
   // copy&paste from verdaccio/src/lib/crypto-utils.ts
   const opts: any = {
     notBefore: '1', // Make sure the time will not rollback :)
     ...options,
   };
   return new Promise(function (resolve, reject) {
-    jwt.sign(payload, secretOrPrivateKey, opts, (error: any, token: any) =>
-      error ? reject(error) : resolve(token),
-    );
+    jwt.sign(payload, secretOrPrivateKey, opts, (error: any, token: any) => (error ? reject(error) : resolve(token)));
   });
 }
 
