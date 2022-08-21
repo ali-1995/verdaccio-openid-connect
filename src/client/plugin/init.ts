@@ -1,15 +1,14 @@
-
-export const authorizePath = "/-/ui/login";
+export const authorizePath = '/-/ui/login';
 export const loginHref = authorizePath;
-export const logoutHref = "/";
+export const logoutHref = '/';
 
 /**
  * See https://verdaccio.org/docs/en/packages
  */
-export const authenticatedUserGroups = ["$all", "@all", "$authenticated", "@authenticated", "all"];
+export const authenticatedUserGroups = ['$all', '@all', '$authenticated', '@authenticated', 'all'];
 
-import { clearCredentials, Credentials, isLoggedIn, saveCredentials, validateCredentials } from "./credentials";
-import { interruptClick, parseCookies, retry } from "./lib";
+import {clearCredentials, Credentials, isLoggedIn, saveCredentials, validateCredentials} from './credentials';
+import {interruptClick, parseCookies, retry} from './lib';
 
 /**
  * Change the current URL to only the current pathname and reload.
@@ -17,10 +16,10 @@ import { interruptClick, parseCookies, retry } from "./lib";
  * to be excluded from the history.
  */
 function reloadToPathname() {
-  document.cookie = "username=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure"
-  document.cookie = "ui-token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure"
-  document.cookie = "npm-token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure"
-  history.replaceState(null, "", location.pathname);
+  document.cookie = 'username=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure';
+  document.cookie = 'ui-token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure';
+  document.cookie = 'npm-token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure';
+  history.replaceState(null, '', location.pathname);
   location.reload();
 }
 
@@ -56,7 +55,7 @@ export interface InitOptions {
 export function init(options: InitOptions) {
   saveAndRemoveCookies();
 
-  const { loginButton, logoutButton, updateUsageInfo } = options;
+  const {loginButton, logoutButton, updateUsageInfo} = options;
 
   interruptClick(loginButton, () => {
     location.href = loginHref;
@@ -64,9 +63,10 @@ export function init(options: InitOptions) {
 
   interruptClick(logoutButton, () => {
     clearCredentials();
-    location.href = logoutHref;
+    if (location.pathname == '/') location.reload();
+    else location.href = logoutHref;
   });
 
-  document.addEventListener("click", () => retry(updateUsageInfo));
+  document.addEventListener('click', () => retry(updateUsageInfo));
   retry(updateUsageInfo);
 }
