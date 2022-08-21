@@ -11,6 +11,6 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true
   },
-  "files": ["src/index.ts"],
+  "files": ["src/index.ts","src/fs.ts","src/redis.ts","src/types.ts"],
   "include": ["src/**/*.test.ts", "src/**/*.d.ts"]
 }
